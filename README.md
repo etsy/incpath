@@ -1,4 +1,5 @@
 === Introduction === 
+
 incpath is a PHP extension to "resolve" a portion of include_path set in PHP's configuration INI files.
 
 There are 3 configuration values:
