@@ -115,17 +115,24 @@ static int evaluate_sapi(char* sapi_list) {
 	char *current_sapi;
 	char *strtok_last;
 
+	/* short-circuit the trivial case */
+	if (!memcmp(sapi_module.name, sapi_list, strlen(sapi_module.name))) {
+		return 1;
+	}
 	sapi_list_copy = estrdup(sapi_list);
 	current_sapi = php_strtok_r(sapi_list_copy, ",", &strtok_last);
 	while (current_sapi) {
-		char *trimmed_sapi = php_trim(current_sapi, (int)(strlen(current_sapi)), NULL, 0, NULL, 3 TSRMLS_CC);
-		if (!strcmp(sapi_module.name, trimmed_sapi)) {
-			efree(trimmed_sapi);
+		zend_string *tmp = zend_string_init(current_sapi, strlen(current_sapi), 0);
+		zend_string *trimmed_sapi = php_trim(tmp, NULL, 0, 3);
+		zend_string_release(tmp);
+
+		if (!memcmp(sapi_module.name, trimmed_sapi->val, trimmed_sapi->len)) {
+			zend_string_release(trimmed_sapi);
 			efree(sapi_list_copy);
 			return 1;
 		}
 
-		efree(trimmed_sapi);
+		zend_string_release(trimmed_sapi);
 		current_sapi = php_strtok_r(NULL, ",", &strtok_last);
 	}
 	efree(sapi_list_copy);
@@ -146,6 +153,8 @@ PHP_RINIT_FUNCTION(incpath)
 {
 	char *original_include_path;
 	char *pattern_substr_start;
+	zend_string *include_path_key;
+	zend_string *new_value_str;
 	int action = ACTION_NOTHING;
 
 	if (INCPATH_G(docroot_sapi_list) && evaluate_sapi(INCPATH_G(docroot_sapi_list)))
@@ -155,7 +164,7 @@ PHP_RINIT_FUNCTION(incpath)
 	else
 		return SUCCESS;
 
-	original_include_path = zend_ini_string("include_path", sizeof("include_path"), 0);
+	original_include_path = zend_ini_string("include_path", (uint)sizeof("include_path")-1, 0);
 	if (INCPATH_G(search_replace_pattern) && ((pattern_substr_start = strstr(original_include_path, INCPATH_G(search_replace_pattern))) != NULL)) {
 		int new_include_path_offset = 0;
 		int original_include_path_len = strlen(original_include_path);
@@ -170,24 +179,31 @@ PHP_RINIT_FUNCTION(incpath)
 		}
 
 		if (action == ACTION_REPLACE_WITH_DOCROOT) {
-			zval **server_doc_root;
+			zval *server_doc_root;
 			char *doc_root_ptr;
 			int doc_root_ptr_len;
-			zval **array;
+			zval *array;
+			zend_string *Server = zend_string_init("_SERVER", sizeof("_SERVER")-1, 0);
+			zend_string *DocRoot = zend_string_init("DOCUMENT_ROOT", sizeof("DOCUMENT_ROOT")-1, 0);
 
 			// This will load it up, if not already loaded.
-			zend_is_auto_global("_SERVER", strlen("_SERVER"));
-			if ((zend_hash_find(&EG(symbol_table), "_SERVER", sizeof("_SERVER"), (void **) &array) == SUCCESS) &&
-			    (Z_TYPE_PP(array) == IS_ARRAY) &&
-			    (zend_hash_find(Z_ARRVAL_PP(array), "DOCUMENT_ROOT", sizeof("DOCUMENT_ROOT"), (void **) &server_doc_root) == SUCCESS) &&
-			    (Z_TYPE_PP(server_doc_root) == IS_STRING) &&
-			    (doc_root_ptr_len = strlen(doc_root_ptr = Z_STRVAL_PP(server_doc_root)))) {
+			zend_is_auto_global(Server);
+			if (((array = zend_hash_find(&EG(symbol_table), Server)) != NULL) &&
+			    (Z_TYPE_P(array) == IS_ARRAY) &&
+			    ((server_doc_root = zend_hash_find(Z_ARRVAL_P(array), DocRoot)) != NULL) &&
+			    (Z_TYPE_P(server_doc_root) == IS_STRING) &&
+			    (doc_root_ptr_len = strlen(doc_root_ptr = Z_STRVAL_P(server_doc_root)))) {
 				realloc_include_path_string(&new_include_path, &new_include_path_len, (new_include_path_offset + doc_root_ptr_len + 1));
 				strncpy(new_include_path + new_include_path_offset, doc_root_ptr, doc_root_ptr_len);
 				new_include_path_offset += doc_root_ptr_len;
+				zend_string_release(Server);
+				zend_string_release(DocRoot);
 			} else {
-				php_error_docref(NULL TSRMLS_CC, E_WARNING,
+				php_error_docref(NULL, E_WARNING,
 						 "incpath called for docroot replacement, but $_SERVER['DOCUMENT_ROOT'] does not exist or is an empty string");
+				zend_string_release(Server);
+				zend_string_release(DocRoot);
+				efree(new_include_path);
 				goto err;
 			}
 
@@ -207,7 +223,7 @@ PHP_RINIT_FUNCTION(incpath)
 				}
 				char *realpath_str = realpath(current_token, NULL);
 				if (realpath_str == NULL) {
-					php_error_docref(NULL TSRMLS_CC, E_WARNING,
+					php_error_docref(NULL, E_WARNING,
 							 "realpath() in incpath failed for %s with errno %d", current_token, errno);
 					efree(pattern_copy);
 					goto err;
@@ -235,13 +251,19 @@ PHP_RINIT_FUNCTION(incpath)
 			new_include_path_offset += remaining_length;
 		}
 		new_include_path[new_include_path_offset] = '\0';
-		if (zend_alter_ini_entry_ex("include_path", sizeof("include_path"), new_include_path, new_include_path_offset, PHP_INI_USER, PHP_INI_STAGE_RUNTIME, 0 TSRMLS_CC) == FAILURE) {
-			php_error_docref(NULL TSRMLS_CC, E_WARNING,
+		include_path_key = zend_string_init("include_path", sizeof("include_path")-1, 0);
+		new_value_str = zend_string_init(new_include_path, new_include_path_offset, 0);
+		if (zend_alter_ini_entry_ex(include_path_key, new_value_str, PHP_INI_USER, PHP_INI_STAGE_RUNTIME, 0) == FAILURE) {
+			php_error_docref(NULL, E_WARNING,
 					 "Error setting include_path INI variable");
 			efree(new_include_path);
+			zend_string_release(include_path_key);
+			zend_string_release(new_value_str);
 			goto err;
 		}
 
+		zend_string_release(include_path_key);
+		zend_string_release(new_value_str);
 		efree(new_include_path);
 	}
 
@@ -255,7 +277,9 @@ err: // Not exiting with FAILED because then Apache/CLI will fail to start at al
  */
 PHP_RSHUTDOWN_FUNCTION(incpath)
 {
-	zend_restore_ini_entry("include_path", sizeof("include_path"), PHP_INI_STAGE_RUNTIME);
+	zend_string *key = zend_string_init("include_path", sizeof("include_path")-1, 0);
+	zend_restore_ini_entry(key, PHP_INI_STAGE_RUNTIME);
+	zend_string_free(key);
 	return SUCCESS;
 }
 /* }}} */
