@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Etsy
+ * Copyright (c) 2013-2015 Etsy
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -55,7 +55,7 @@ zend_module_entry incpath_module_entry = {
 	PHP_RSHUTDOWN(incpath),
 	PHP_MINFO(incpath),
 #if ZEND_MODULE_API_NO >= 20010901
-	"0.1", /* version number */
+	"0.2", /* version number */
 #endif
 	STANDARD_MODULE_PROPERTIES
 };
