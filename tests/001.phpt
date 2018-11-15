@@ -67,7 +67,7 @@ if (symlink($real_include_path, $linked_include_path) !== true) {
 // the output of the echo to be $real_include_path
 
 foreach ($variations as $v) {
-  $command = "php -d \"incpath.realpath_sapi_list=cli\" -d \"include_path={$v['original_include_path']}\"";
+  $command = "php -dextension=modules/incpath.so -d \"incpath.realpath_sapi_list=cli\" -d \"include_path={$v['original_include_path']}\"";
   $command .= " -d \"incpath.search_replace_pattern={$v['replacement_pattern']}\"";
   $command .= " -r \"echo get_include_path();\"";
 
